@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RIFT — Adaptive Score Instrument</title>
+  <meta name="description" content="An adaptive game score with an SNES-style sample engine. Steer the music through Explore, Tension, Combat and Overdrive, blend cartridge soundfonts and capture the result.">
+  <meta name="theme-color" content="#111311">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23111311'/%3E%3Cpath d='M9 24 L9 8 L16 8 Q21 8 21 13 Q21 17 17 17.6 L21 24' fill='none' stroke='%23e9ebe2' stroke-width='3' stroke-linejoin='round'/%3E%3Cpath d='M27 6 L22 26' stroke='%23ff6a3d' stroke-width='3'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&family=Geist+Mono:wght@400;500&display=swap">
+  <link rel="stylesheet" href="css/style.css">
+  <script type="module" src="js/main.js"></script>
+</head>
+<body>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4.5v15l12.5-7.5z" fill="currentColor"/></symbol>
+    <symbol id="i-pause" viewBox="0 0 24 24"><rect x="6" y="4.5" width="4" height="15" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="14" y="4.5" width="4" height="15" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.8"/></symbol>
+    <symbol id="i-enemy" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M12 3.5a7.5 7.5 0 0 0-7.5 7.5c0 2.5 1.2 4.3 3 5.4V20h9v-3.6c1.8-1.1 3-2.9 3-5.4A7.5 7.5 0 0 0 12 3.5z"/><circle cx="9.2" cy="11.2" r="1.5"/><circle cx="14.8" cy="11.2" r="1.5"/><path d="M10.5 20v-2.2M13.5 20v-2.2"/></g></symbol>
+    <symbol id="i-flag" viewBox="0 0 24 24"><path d="M5.5 21V4M5.5 4.5h11.5l-2.3 4.2 2.3 4.3H5.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" stroke-linecap="round"/></symbol>
+    <symbol id="i-speaker" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" stroke-linecap="round"><path d="M4 9.5v5h3.5L12 18V6L7.5 9.5z"/><path d="M15.5 9a4.2 4.2 0 0 1 0 6M18 6.5a7.7 7.7 0 0 1 0 11"/></g></symbol>
+    <symbol id="i-headphones" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M4 15v-2.5a8 8 0 0 1 16 0V15"/><rect x="3.5" y="14" width="4" height="6" rx="1.2"/><rect x="16.5" y="14" width="4" height="6" rx="1.2"/></g></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="M6.5 9.5 12 15l5.5-5.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 15.5V4.5M7.5 9 12 4.5 16.5 9M5 15.5V19h14v-3.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M7 7l10 10M17 7 7 17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+  </svg>
+
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <span class="logo" aria-label="RIFT">RIFT<span class="slash">/</span></span>
+        <span class="tagline">Adaptive<br>score instrument</span>
+      </div>
+      <ul class="status" aria-label="Engine status">
+        <li id="engineStatus"><i class="dot"></i>SNES sample engine</li>
+        <li><i class="dot"></i><span id="bpmStatus">142 BPM</span></li>
+        <li><i class="dot"></i><span id="keyStatus">E Phrygian</span></li>
+      </ul>
+    </header>
+
+    <main class="layout">
+      <section class="arrangement" aria-labelledby="mixTitle">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">01 / Live arrangement</p>
+            <h1 id="mixTitle">RIFT original · Combined soundfonts</h1>
+          </div>
+          <button id="playBtn" class="btn-primary" type="button" aria-keyshortcuts="Space">
+            <svg class="icon"><use href="#i-play"/></svg><span id="playLabel">Play</span>
+          </button>
+        </div>
+
+        <div class="stage" id="stage">
+          <canvas id="scope" aria-hidden="true"></canvas>
+          <div class="stage-head">
+            <div>
+              <p class="eyebrow">Current state</p>
+              <p class="state-name" id="stateName" aria-live="polite">EXPLORE</p>
+            </div>
+            <span class="live" id="liveTag"><i></i><span>Ready</span></span>
+          </div>
+          <div class="stage-bar">
+            <span id="holdText">Press play to begin</span>
+            <span class="beats" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+            <span id="barText">Bar 1 · 142 BPM</span>
+          </div>
+        </div>
+        <div class="progress" aria-hidden="true"><i id="progress"></i></div>
+
+        <div class="states" id="states" role="radiogroup" aria-label="Music state"></div>
+
+        <div class="layers">
+          <div class="layers-head">
+            <h2>Sound layers</h2>
+            <span class="mono-label" id="voiceCount">4 voices</span>
+          </div>
+          <ol class="layer-list" id="layerList"></ol>
+          <p class="hint">Choose a state. The arrangement changes on the next bar, keeping the pulse intact.</p>
+        </div>
+      </section>
+
+      <aside class="side">
+        <section class="panel" aria-labelledby="encounterTitle">
+          <p class="eyebrow">02 / Encounter input</p>
+          <h2 id="encounterTitle">Run the room</h2>
+
+          <div class="row">
+            <label for="autoToggle">Automatic encounter</label>
+            <label class="switch"><input type="checkbox" role="switch" id="autoToggle" checked aria-keyshortcuts="A"><span></span></label>
+          </div>
+          <p class="note">A 74-second arc: exploration, rising threat, battle, and release.</p>
+
+          <div class="threat">
+            <div class="row">
+              <label for="threat">Threat level</label>
+              <span class="threat-value"><b id="threatValue">12</b><small>/ 100</small></span>
+            </div>
+            <input type="range" id="threat" class="range range-threat" min="0" max="100" step="1" value="12" aria-label="Threat level">
+            <div class="range-labels"><span>Quiet</span><span>Hostile</span></div>
+          </div>
+        </section>
+
+        <section class="panel" aria-labelledby="eventsTitle">
+          <div class="row">
+            <h3 id="eventsTitle">Live events</h3>
+            <span class="mono-label">Play the accents</span>
+          </div>
+          <div class="events">
+            <button type="button" class="event" id="enemyBtn" aria-keyshortcuts="K">
+              <svg class="icon"><use href="#i-enemy"/></svg><kbd>K</kbd><span>Enemy down</span>
+            </button>
+            <button type="button" class="event" id="clearBtn" aria-keyshortcuts="C">
+              <svg class="icon"><use href="#i-flag"/></svg><kbd>C</kbd><span>Arena cleared</span>
+            </button>
+          </div>
+          <div class="row">
+            <label for="healthToggle">Low health</label>
+            <label class="switch"><input type="checkbox" role="switch" id="healthToggle" aria-keyshortcuts="H"><span></span></label>
+          </div>
+          <ol class="log" id="log" aria-live="polite"></ol>
+        </section>
+
+        <section class="panel" aria-labelledby="outputTitle">
+          <p class="eyebrow" id="outputTitle">03 / Sound &amp; output</p>
+          <div class="tabs" role="tablist">
+            <button type="button" role="tab" id="tabMixes" aria-selected="true" aria-controls="paneMixes">Mixes</button>
+            <button type="button" role="tab" id="tabGames" aria-selected="false" aria-controls="paneGames">Games <small id="gameCount">12</small></button>
+          </div>
+
+          <div class="pane" id="paneMixes" role="tabpanel" aria-labelledby="tabMixes">
+            <div class="select-wrap">
+              <select id="mixSelect" aria-label="Mix"></select>
+              <svg class="icon"><use href="#i-chevron"/></svg>
+            </div>
+            <p class="note" id="mixBlurb"></p>
+            <p class="mix-carts" id="mixCarts"></p>
+          </div>
+
+          <div class="pane" id="paneGames" role="tabpanel" aria-labelledby="tabGames" hidden>
+            <div class="games-tools">
+              <input type="search" id="gameSearch" placeholder="Search cartridges" aria-label="Search cartridges">
+              <div class="select-wrap small">
+                <select id="applyTarget" aria-label="Apply to"></select>
+                <svg class="icon"><use href="#i-chevron"/></svg>
+              </div>
+            </div>
+            <ul class="games" id="gameList"></ul>
+            <p class="note small">Built-in palettes are synthesised after each soundtrack. No ROM samples are included.</p>
+            <label class="upload" id="dropZone">
+              <input type="file" id="sf2Input" accept=".sf2,audio/x-soundfont" multiple>
+              <svg class="icon"><use href="#i-upload"/></svg>
+              <span><b>Load .sf2 soundfont</b><small>Drop a file or browse. Real SNES rips work best.</small></span>
+            </label>
+            <p class="note small" id="sf2Status" role="status"></p>
+          </div>
+
+          <div class="master">
+            <svg class="icon"><use href="#i-speaker"/></svg>
+            <label for="master">Master</label>
+            <input type="range" id="master" class="range" min="0" max="1" step="0.01" value="0.8">
+          </div>
+          <button type="button" class="btn-record" id="recordBtn"><i></i><span id="recordLabel">Record capture</span></button>
+          <p class="note small"><svg class="icon inline"><use href="#i-headphones"/></svg> Headphones recommended.<br>RIFT original, shaped by your chosen games.</p>
+        </section>
+      </aside>
+    </main>
+
+    <footer class="footer">
+      <span id="footerMix">Original adaptive score · Cross-cartridge mix</span>
+      <span id="footerFonts">Six SNES soundfonts · Direct stereo capture</span>
+    </footer>
+  </div>
+
+  <div class="popover" id="sourcePopover" role="dialog" aria-label="Layer source" hidden>
+    <p class="eyebrow" id="popoverTitle">Source</p>
+    <label>Cartridge
+      <span class="select-wrap"><select id="sourcePrimary"></select><svg class="icon"><use href="#i-chevron"/></svg></span>
+    </label>
+    <label>Blend with
+      <span class="select-wrap"><select id="sourceSecondary"></select><svg class="icon"><use href="#i-chevron"/></svg></span>
+    </label>
+    <p class="note small" id="popoverNote"></p>
+  </div>
+
+  <noscript><p class="noscript">RIFT needs JavaScript and the Web Audio API.</p></noscript>
+</body>
+</html>
