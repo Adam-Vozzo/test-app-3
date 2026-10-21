@@ -213,17 +213,34 @@ export class Engine {
     return 'queued';
   }
 
+  // While stopped the transport is closed; open it for one-off sounds.
+  async ensureAudible() {
+    this.unlock();
+    if (this.ctx.state !== 'running') await this.ctx.resume();
+    if (!this.playing) {
+      this.transport.gain.cancelScheduledValues(this.ctx.currentTime);
+      this.transport.gain.setTargetAtTime(1, this.ctx.currentTime, 0.01);
+    }
+  }
+
   async stinger(type) {
     if (this.playing) {
       this.stingerQueue.push(type);
       return;
     }
-    await this.ensureContext();
-    if (this.ctx.state !== 'running') await this.ctx.resume();
-    this.transport.gain.cancelScheduledValues(this.ctx.currentTime);
-    this.transport.gain.setTargetAtTime(1, this.ctx.currentTime, 0.01);
-    const root = SCORE[this.stateId].progression[this.stateBar % 4];
+    await this.ensureAudible();
+    const root = SCORE[this.stateId].progression[Math.max(0, this.stateBar) % 4];
     this.playStinger(type, this.ctx.currentTime + 0.03, root);
+  }
+
+  // Auditions one note from the arrangement editor, even on a muted layer.
+  async preview(layerIndex, note, stateId) {
+    const layer = this.layers[layerIndex];
+    if (!layer.voices.length) return;
+    await this.ensureAudible();
+    const root = SCORE[stateId].progression[Math.floor(note.step / STEPS_PER_BAR)];
+    const ev = { ...note, len: Math.min(note.len, 8), vel: note.lane ? 0.85 : 0.8 };
+    this.playEvent(layer, ev, root, this.ctx.currentTime + 0.02, this.stingerBus);
   }
 
   async play() {
@@ -330,9 +347,8 @@ export class Engine {
     }
   }
 
-  playEvent(layer, ev, root, t) {
+  playEvent(layer, ev, root, t, dest = layer.nodes.input) {
     const dur = ev.len * STEP_SECONDS;
-    const dest = layer.nodes.input;
     switch (layer.def.role) {
       case 'pad':
         for (const m of padVoicing(root)) this.voice(layer, dest, m, t, dur, ev.vel * 0.75);

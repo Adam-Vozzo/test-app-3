@@ -23,6 +23,9 @@
     <symbol id="i-headphones" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M4 15v-2.5a8 8 0 0 1 16 0V15"/><rect x="3.5" y="14" width="4" height="6" rx="1.2"/><rect x="16.5" y="14" width="4" height="6" rx="1.2"/></g></symbol>
     <symbol id="i-chevron" viewBox="0 0 24 24"><path d="M6.5 9.5 12 15l5.5-5.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 15.5V4.5M7.5 9 12 4.5 16.5 9M5 15.5V19h14v-3.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-edit" viewBox="0 0 24 24"><path d="M14.5 5.5l4 4M4.5 19.5l1-4.5L15.8 4.7a1.4 1.4 0 0 1 2 0l1.5 1.5a1.4 1.4 0 0 1 0 2L9 18.5z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></symbol>
+    <symbol id="i-reset" viewBox="0 0 24 24"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3M4.5 4.5v4h4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 5.5 4.5 10 9 14.5M5 10h9a5 5 0 0 1 0 10h-3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-x" viewBox="0 0 24 24"><path d="M7 7l10 10M17 7 7 17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
   </svg>
 
@@ -73,10 +76,18 @@
         <div class="layers">
           <div class="layers-head">
             <h2>Sound layers</h2>
-            <span class="mono-label" id="voiceCount">4 voices</span>
+            <div class="layers-tools">
+              <span class="mono-label" id="voiceCount">4 voices</span>
+              <button type="button" class="btn-ghost" id="editBtn" aria-expanded="false">
+                <svg class="icon"><use href="#i-edit"/></svg><span>Edit arrangement</span>
+              </button>
+              <button type="button" class="btn-ghost" id="resetBtn" disabled>
+                <svg class="icon"><use href="#i-reset"/></svg><span id="resetLabel">Reset</span>
+              </button>
+            </div>
           </div>
           <ol class="layer-list" id="layerList"></ol>
-          <p class="hint">Choose a state. The arrangement changes on the next bar, keeping the pulse intact.</p>
+          <p class="hint">Choose a state. The arrangement changes on the next bar, keeping the pulse intact. Click a layer’s steps to edit its part.</p>
         </div>
       </section>
 
@@ -146,13 +157,7 @@
               </div>
             </div>
             <ul class="games" id="gameList"></ul>
-            <p class="note small">Built-in palettes are synthesised after each soundtrack. No ROM samples are included.</p>
-            <label class="upload" id="dropZone">
-              <input type="file" id="sf2Input" accept=".sf2,audio/x-soundfont" multiple>
-              <svg class="icon"><use href="#i-upload"/></svg>
-              <span><b>Load .sf2 soundfont</b><small>Drop a file or browse. Real SNES rips work best.</small></span>
-            </label>
-            <p class="note small" id="sf2Status" role="status"></p>
+            <p class="note small">Built-in palettes are synthesised after each soundtrack. No ROM samples are included. Upload a .sf2 for the real thing.</p>
           </div>
 
           <div class="master">
@@ -160,7 +165,17 @@
             <label for="master">Master</label>
             <input type="range" id="master" class="range" min="0" max="1" step="0.01" value="0.8">
           </div>
-          <button type="button" class="btn-record" id="recordBtn"><i></i><span id="recordLabel">Record capture</span></button>
+          <div class="output-actions">
+            <button type="button" class="btn-secondary" id="uploadBtn">
+              <svg class="icon"><use href="#i-upload"/></svg><span>Upload soundfont</span>
+            </button>
+            <button type="button" class="btn-secondary btn-record" id="recordBtn"><i></i><span id="recordLabel">Record capture</span></button>
+          </div>
+          <input type="file" id="sf2Input" accept=".sf2,audio/x-soundfont" multiple hidden>
+          <div class="upload-status" id="sf2Status" role="status" hidden>
+            <p id="sf2Message"></p>
+            <button type="button" class="btn-link" id="sf2Apply" hidden>Use on all layers</button>
+          </div>
           <p class="note small"><svg class="icon inline"><use href="#i-headphones"/></svg> Headphones recommended.<br>RIFT original, shaped by your chosen games.</p>
         </section>
       </aside>
@@ -181,6 +196,9 @@
       <span class="select-wrap"><select id="sourceSecondary"></select><svg class="icon"><use href="#i-chevron"/></svg></span>
     </label>
     <p class="note small" id="popoverNote"></p>
+    <button type="button" class="btn-link" id="popoverUpload">
+      <svg class="icon"><use href="#i-upload"/></svg>Upload a .sf2 for this layer
+    </button>
   </div>
 
   <noscript><p class="noscript">RIFT needs JavaScript and the Web Audio API.</p></noscript>

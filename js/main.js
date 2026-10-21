@@ -2,9 +2,11 @@ import { Engine } from './audio/engine.js';
 import { Library, BANKS, MIXES, bankById, mixById } from './audio/banks.js';
 import { parseSf2 } from './audio/sf2.js';
 import { Scope } from './ui/scope.js';
+import { ArrangementEditor, pushHistory, undo } from './ui/editor.js';
 import {
   BPM, KEY_NAME, STATES, LAYERS, SCORE, VIEW_STEPS, PHRASE_STEPS, ENCOUNTER_LENGTH,
   stateById, encounterThreat, encounterTimeFor, threatToState,
+  exportEdits, importEdits, resetArrangement, isArrangementEdited, isLayerEdited,
 } from './score.js';
 
 const $ = (id) => document.getElementById(id);
@@ -33,6 +35,7 @@ const app = {
   popoverLayer: -1,
   loading: null,
   ready: false,
+  lastEditorLayer: 4,
 };
 
 const ui = {
@@ -62,7 +65,13 @@ const ui = {
   applyTarget: $('applyTarget'),
   sf2Input: $('sf2Input'),
   sf2Status: $('sf2Status'),
-  dropZone: $('dropZone'),
+  sf2Message: $('sf2Message'),
+  sf2Apply: $('sf2Apply'),
+  uploadBtn: $('uploadBtn'),
+  popoverUpload: $('popoverUpload'),
+  editBtn: $('editBtn'),
+  resetBtn: $('resetBtn'),
+  resetLabel: $('resetLabel'),
   master: $('master'),
   recordBtn: $('recordBtn'),
   recordLabel: $('recordLabel'),
@@ -99,6 +108,7 @@ function saveSettings() {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({
         master: engine.master,
+        arrangement: exportEdits(),
         layers: engine.layers.map((l, i) => ({
           enabled: l.enabled,
           volume: l.volume,
@@ -246,8 +256,9 @@ function buildLayers() {
   const list = $('layerList');
   LAYERS.forEach((def, i) => {
     const src = el('button', { type: 'button', class: 'layer-src', 'aria-haspopup': 'dialog', 'aria-expanded': 'false', title: 'Change source' });
-    const steps = el('div', { class: 'steps', 'aria-hidden': 'true' });
+    const steps = el('button', { type: 'button', class: 'steps', 'aria-expanded': 'false', 'aria-label': `Edit ${def.name.toLowerCase()} part`, title: `Edit ${def.name.toLowerCase()} part` });
     for (let s = 0; s < VIEW_STEPS; s++) steps.append(el('i'));
+    steps.addEventListener('click', () => toggleEditor(i));
     const vol = el('input', { type: 'range', class: 'range', min: '0', max: '1', step: '0.01', 'aria-label': `${def.name} volume` });
     const toggle = el('input', { type: 'checkbox', role: 'switch', 'aria-label': `${def.name} on` });
     const li = el('li', { class: 'layer' }, [
@@ -306,6 +317,82 @@ function updateVoiceCount() {
   const { masks } = SCORE[app.displayState];
   const n = LAYERS.filter((l, i) => engine.layers[i].enabled && masks[l.id].some(Boolean)).length;
   ui.voiceCount.textContent = `${n} voice${n === 1 ? '' : 's'}`;
+}
+
+// ------------------------------------------------------ arrangement editing
+
+const editor = new ArrangementEditor({
+  onEdit: afterEdit,
+  onPickState: chooseState,
+  onPreview: (layer, note, state) => engine.preview(layer, note, state),
+  onClose: syncEditorButtons,
+});
+
+// The state the music is on or heading to; the editor always shows it.
+const targetState = () => engine.pending || engine.stateId;
+
+function toggleEditor(i) {
+  if (editor.layer === i) {
+    editor.close();
+    return;
+  }
+  editor.show(i, rows[i].li, targetState());
+  app.lastEditorLayer = i;
+  syncEditorButtons();
+  editor.root.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+
+function syncEditorButtons() {
+  rows.forEach((row, i) => {
+    row.steps.setAttribute('aria-expanded', String(editor.layer === i));
+    row.li.classList.toggle('editing', editor.layer === i);
+  });
+  ui.editBtn.setAttribute('aria-expanded', String(editor.isOpen));
+  ui.editBtn.lastElementChild.textContent = editor.isOpen ? 'Close editor' : 'Edit arrangement';
+}
+
+function afterEdit() {
+  if (app.view.state) renderPatterns(app.view.state, Math.max(0, app.view.win));
+  updateEditMarks();
+  saveSettings();
+}
+
+function updateEditMarks() {
+  rows.forEach((row, i) => {
+    row.li.classList.toggle('edited', STATES.some((s) => isLayerEdited(s.id, LAYERS[i].id)));
+  });
+  ui.resetBtn.disabled = !isArrangementEdited();
+  if (ui.resetBtn.disabled) disarmReset();
+}
+
+let resetTimer = 0;
+
+function disarmReset() {
+  clearTimeout(resetTimer);
+  ui.resetBtn.classList.remove('confirm');
+  ui.resetLabel.textContent = 'Reset';
+}
+
+// Two clicks: the first arms the button, the second restores the original score.
+function onResetClick() {
+  if (!ui.resetBtn.classList.contains('confirm')) {
+    ui.resetBtn.classList.add('confirm');
+    ui.resetLabel.textContent = 'Confirm reset';
+    clearTimeout(resetTimer);
+    resetTimer = setTimeout(disarmReset, 3500);
+    return;
+  }
+  disarmReset();
+  pushHistory();
+  resetArrangement();
+  editor.refresh();
+  afterEdit();
+}
+
+function undoEdit() {
+  if (!undo()) return;
+  editor.refresh();
+  afterEdit();
 }
 
 function renderLayerSource(i) {
@@ -499,8 +586,7 @@ function buildApplyTarget() {
   );
 }
 
-function applyCartridge(src) {
-  const target = ui.applyTarget.value;
+function applyCartridge(src, target = ui.applyTarget.value) {
   const indexes = target === 'all' ? LAYERS.map((_, i) => i) : [Number(target)];
   for (const i of indexes) {
     const role = LAYERS[i].role;
@@ -511,26 +597,44 @@ function applyCartridge(src) {
   saveSettings();
 }
 
-function setSf2Status(text) {
-  ui.sf2Status.textContent = text;
+function setSf2Status(text, applyFont = null) {
+  ui.sf2Status.hidden = false;
+  ui.sf2Message.textContent = text;
+  ui.sf2Apply.hidden = !applyFont;
+  ui.sf2Apply.dataset.font = applyFont ?? '';
 }
 
-async function loadSoundfonts(files) {
+// Loads .sf2 files. With `layer`, the first font goes straight onto that layer;
+// otherwise the status offers to put it on every layer.
+async function loadSoundfonts(files, layer = null) {
+  const loaded = [];
   for (const file of files) {
     if (!/\.sf2$/i.test(file.name)) {
-      setSf2Status(`${file.name} isn't an .sf2 file.`);
+      setSf2Status(`${file.name} isn’t an .sf2 file.`);
       continue;
     }
     setSf2Status(`Reading ${file.name}…`);
     try {
       const font = parseSf2(await file.arrayBuffer(), file.name);
       library.addFont(font);
-      setSf2Status(`${font.name}: ${font.presets.length} presets ready. Apply it below or pick presets from a layer's source.`);
+      loaded.push(font);
     } catch (err) {
-      setSf2Status(`Couldn't read ${file.name}: ${err.message}`);
+      setSf2Status(`Couldn’t read ${file.name}: ${err.message}`);
     }
   }
   renderGames();
+  const font = loaded[loaded.length - 1];
+  if (!font) return;
+
+  const presets = `${font.presets.length} preset${font.presets.length === 1 ? '' : 's'}`;
+  if (layer !== null) {
+    applySources(layer, [{ font: font.id, preset: font.suggestPreset(LAYERS[layer].role) }]);
+    updateMixUI();
+    if (app.popoverLayer === layer) openPopover(layer, rows[layer].src);
+    setSf2Status(`${font.name} (${presets}) is now on ${LAYERS[layer].name.toLowerCase()}.`);
+    return;
+  }
+  setSf2Status(`${font.name} loaded with ${presets}. Pick presets from any layer’s source, or:`, font.id);
 }
 
 function removeFont(id) {
@@ -543,6 +647,7 @@ function removeFont(id) {
   });
   library.removeFont(id);
   if (app.popoverLayer >= 0) closePopover();
+  if (ui.sf2Apply.dataset.font === id) ui.sf2Status.hidden = true;
   updateMixUI();
 }
 
@@ -631,6 +736,7 @@ async function togglePlay() {
   if (engine.playing) {
     engine.pause();
     setPlayhead(-1);
+    editor.setPlayhead(-1);
     ui.beats.forEach((b) => b.classList.remove('on'));
     return;
   }
@@ -662,6 +768,7 @@ function onStep(e) {
   const win = Math.floor(e.phraseStep / VIEW_STEPS);
   if (app.view.state !== e.state || app.view.win !== win) renderPatterns(e.state, win);
   setPlayhead(e.phraseStep % VIEW_STEPS);
+  editor.setPlayhead(e.phraseStep, e.state);
   const beat = Math.floor(e.inBar / 4);
   ui.beats.forEach((b, i) => b.classList.toggle('on', i === beat));
   ui.barText.textContent = `Bar ${e.bar} · ${BPM} BPM`;
@@ -678,6 +785,7 @@ function frame() {
     if (last && engine.playing) onStep(last);
     updateEncounter();
   }
+  editor.setState(targetState());
   renderStatus();
 
   let progress = 0;
@@ -777,26 +885,47 @@ function wire() {
     applyCartridge(game.dataset.font ? { font: game.dataset.font } : { bank: game.dataset.bank });
   });
 
+  let uploadLayer = null;
+  ui.uploadBtn.addEventListener('click', () => {
+    uploadLayer = null;
+    ui.sf2Input.click();
+  });
+  ui.popoverUpload.addEventListener('click', () => {
+    uploadLayer = app.popoverLayer;
+    ui.sf2Input.click();
+  });
   ui.sf2Input.addEventListener('change', () => {
-    loadSoundfonts([...ui.sf2Input.files]);
+    loadSoundfonts([...ui.sf2Input.files], uploadLayer);
     ui.sf2Input.value = '';
+  });
+  ui.sf2Apply.addEventListener('click', () => {
+    const font = library.fonts.get(ui.sf2Apply.dataset.font);
+    if (!font) return;
+    applyCartridge({ font: font.id }, 'all');
+    setSf2Status(`${font.name} is on every layer. Fine-tune presets from each layer’s source.`);
   });
   const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
   document.addEventListener('dragover', (e) => {
     if (!hasFiles(e)) return;
     e.preventDefault();
-    ui.dropZone.classList.add('drag');
+    ui.uploadBtn.classList.add('drag');
   });
   document.addEventListener('dragleave', (e) => {
-    if (!e.relatedTarget) ui.dropZone.classList.remove('drag');
+    if (!e.relatedTarget) ui.uploadBtn.classList.remove('drag');
   });
   document.addEventListener('drop', (e) => {
     if (!hasFiles(e)) return;
     e.preventDefault();
-    ui.dropZone.classList.remove('drag');
-    $('tabGames').click();
+    ui.uploadBtn.classList.remove('drag');
     loadSoundfonts([...e.dataTransfer.files]);
   });
+
+  ui.editBtn.addEventListener('click', () => {
+    if (editor.isOpen) editor.close();
+    else toggleEditor(app.lastEditorLayer);
+  });
+  ui.resetBtn.addEventListener('click', onResetClick);
+  ui.resetBtn.addEventListener('blur', disarmReset);
 
   ui.master.addEventListener('input', () => {
     engine.setMaster(Number(ui.master.value));
@@ -815,12 +944,22 @@ function wire() {
   window.addEventListener('resize', closePopover);
 
   document.addEventListener('keydown', (e) => {
-    if (e.metaKey || e.ctrlKey || e.altKey) return;
     const t = e.target;
+    const typing = t.closest('select, textarea, input[type="search"], input[type="text"]');
+    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === 'z' && !typing) {
+      e.preventDefault();
+      undoEdit();
+      return;
+    }
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
     if (e.key === 'Escape') {
       if (app.popoverLayer >= 0) {
         const anchor = rows[app.popoverLayer].src;
         closePopover();
+        anchor.focus();
+      } else if (editor.isOpen && editor.root.contains(t)) {
+        const anchor = rows[editor.layer].steps;
+        editor.close();
         anchor.focus();
       }
       return;
@@ -903,6 +1042,8 @@ function init() {
     row.src.textContent = '…';
   });
 
+  importEdits(saved?.arrangement);
+  updateEditMarks();
   paintRange(ui.threat);
   renderPatterns(app.displayState, 0);
   renderLog();

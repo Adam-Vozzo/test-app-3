@@ -91,58 +91,151 @@ const SOURCE = {
   },
 };
 
-const DRUM_VEL = { x: 0.85, X: 1, g: 0.42 };
+export const DRUM_VEL = { x: 0.85, X: 1, g: 0.42 };
 
 function parseLine(str, lane) {
   if (!str) return [];
   const s = str.repeat(Math.ceil(PHRASE_STEPS / str.length)).slice(0, PHRASE_STEPS);
-  const events = [];
+  const notes = [];
   for (let i = 0; i < PHRASE_STEPS; i++) {
     const tok = s[i];
     if (tok === '.' || tok === '-') continue;
     let len = 1;
     while (i + len < PHRASE_STEPS && s[i + len] === '-') len++;
-    events.push({ step: i, tok, len, lane });
+    notes.push(lane ? { step: i, tok, len, lane } : { step: i, tok, len });
   }
-  return events;
+  return notes;
 }
 
-function velocityFor(role, ev) {
-  if (ev.lane) return DRUM_VEL[ev.tok] ?? 0.85;
+function velocityFor(role, note) {
+  if (note.lane) return DRUM_VEL[note.tok] ?? 0.85;
   switch (role) {
-    case 'pad': return ev.tok === 'p' ? 0.5 : 0.8;
-    case 'bass': return ev.step % 16 === 0 ? 1 : 0.82;
-    case 'arp': return ev.step % 4 === 0 ? 0.78 : 0.6;
+    case 'pad': return note.tok === 'p' ? 0.5 : 0.8;
+    case 'bass': return note.step % 16 === 0 ? 1 : 0.82;
+    case 'arp': return note.step % 4 === 0 ? 0.78 : 0.6;
     default: return 0.82;
   }
 }
 
-function compile() {
+// ------------------------------------------------------------- arrangement
+// The written score above is the default arrangement. ARRANGEMENT is the live,
+// editable copy ({ progression, layers: { [layerId]: notes } } per state), and
+// SCORE is its compiled form: per-step event slots the sequencer reads directly.
+
+const LAYER_ROLE = Object.fromEntries(LAYERS.map((l) => [l.id, l.role]));
+const clone = (v) => JSON.parse(JSON.stringify(v));
+
+function defaultArrangement() {
   const out = {};
   for (const [stateId, src] of Object.entries(SOURCE)) {
     const layers = {};
-    const masks = {};
-    for (const layer of LAYERS) {
-      const def = src[layer.id];
-      const events = typeof def === 'string'
+    for (const { id } of LAYERS) {
+      const def = src[id];
+      layers[id] = typeof def === 'string'
         ? parseLine(def)
-        : Object.entries(def).flatMap(([lane, line]) => parseLine(line, lane));
-      const slots = Array.from({ length: PHRASE_STEPS }, () => []);
-      const mask = new Array(PHRASE_STEPS).fill(false);
-      for (const ev of events) {
-        ev.vel = velocityFor(layer.role, ev);
-        slots[ev.step].push(ev);
-        mask[ev.step] = true;
-      }
-      layers[layer.id] = slots;
-      masks[layer.id] = mask;
+        : Object.entries(def).flatMap(([lane, line]) => parseLine(line, lane)).sort((a, b) => a.step - b.step);
     }
-    out[stateId] = { progression: src.progression, layers, masks };
+    out[stateId] = { progression: [...src.progression], layers };
   }
   return out;
 }
 
-export const SCORE = compile();
+const DEFAULT_ARRANGEMENT = defaultArrangement();
+export const ARRANGEMENT = defaultArrangement();
+export const SCORE = {};
+
+function compileLayer(stateId, layerId) {
+  const role = LAYER_ROLE[layerId];
+  const slots = Array.from({ length: PHRASE_STEPS }, () => []);
+  const mask = new Array(PHRASE_STEPS).fill(false);
+  for (const note of ARRANGEMENT[stateId].layers[layerId]) {
+    slots[note.step].push({ ...note, vel: velocityFor(role, note) });
+    mask[note.step] = true;
+  }
+  SCORE[stateId].layers[layerId] = slots;
+  SCORE[stateId].masks[layerId] = mask;
+}
+
+for (const stateId of Object.keys(ARRANGEMENT)) {
+  SCORE[stateId] = { progression: ARRANGEMENT[stateId].progression, layers: {}, masks: {} };
+  for (const { id } of LAYERS) compileLayer(stateId, id);
+}
+
+// Replaces a part. The array is kept (sorted in place) so callers can go on
+// editing the note objects they hold.
+export function setLayerNotes(stateId, layerId, notes) {
+  notes.sort((a, b) => a.step - b.step);
+  ARRANGEMENT[stateId].layers[layerId] = notes;
+  compileLayer(stateId, layerId);
+}
+
+export function setChord(stateId, bar, degree) {
+  ARRANGEMENT[stateId].progression[bar] = degree;
+}
+
+export function resetLayer(stateId, layerId) {
+  setLayerNotes(stateId, layerId, clone(DEFAULT_ARRANGEMENT[stateId].layers[layerId]));
+}
+
+export function resetArrangement() {
+  for (const stateId of Object.keys(ARRANGEMENT)) {
+    ARRANGEMENT[stateId].progression.splice(0, PHRASE_STEPS / STEPS_PER_BAR, ...DEFAULT_ARRANGEMENT[stateId].progression);
+    for (const { id } of LAYERS) resetLayer(stateId, id);
+  }
+}
+
+const notesKey = (notes) => notes.map((n) => `${n.step}:${n.len}:${n.tok}:${n.lane ?? ''}`).sort().join(',');
+
+export function isLayerEdited(stateId, layerId) {
+  return notesKey(ARRANGEMENT[stateId].layers[layerId]) !== notesKey(DEFAULT_ARRANGEMENT[stateId].layers[layerId]);
+}
+
+export function isChordsEdited(stateId) {
+  return ARRANGEMENT[stateId].progression.join() !== DEFAULT_ARRANGEMENT[stateId].progression.join();
+}
+
+export function isArrangementEdited() {
+  return Object.keys(ARRANGEMENT).some((s) => isChordsEdited(s) || LAYERS.some((l) => isLayerEdited(s, l.id)));
+}
+
+// Only the parts that differ from the default, for saving.
+export function exportEdits() {
+  const out = {};
+  for (const stateId of Object.keys(ARRANGEMENT)) {
+    const entry = {};
+    if (isChordsEdited(stateId)) entry.progression = [...ARRANGEMENT[stateId].progression];
+    for (const { id } of LAYERS) {
+      if (isLayerEdited(stateId, id)) (entry.layers ??= {})[id] = clone(ARRANGEMENT[stateId].layers[id]);
+    }
+    if (Object.keys(entry).length) out[stateId] = entry;
+  }
+  return out;
+}
+
+// Applies saved edits on top of the default, dropping anything malformed.
+export function importEdits(data) {
+  resetArrangement();
+  if (!data || typeof data !== 'object') return;
+  for (const [stateId, entry] of Object.entries(data)) {
+    if (!ARRANGEMENT[stateId] || !entry) continue;
+    const prog = entry.progression;
+    if (Array.isArray(prog) && prog.length === 4 && prog.every((d) => CHORDS.some((c) => c.degree === d))) {
+      prog.forEach((d, bar) => setChord(stateId, bar, d));
+    }
+    for (const [layerId, notes] of Object.entries(entry.layers ?? {})) {
+      const role = LAYER_ROLE[layerId];
+      if (!role || !Array.isArray(notes)) continue;
+      const keys = new Set(ROWS[role].map((r) => r.key));
+      const valid = notes.filter((n) => n
+        && Number.isInteger(n.step) && n.step >= 0 && n.step < PHRASE_STEPS
+        && Number.isInteger(n.len) && n.len >= 1 && n.step + n.len <= PHRASE_STEPS
+        && (role === 'kit' ? keys.has(n.lane) && n.tok in DRUM_VEL : keys.has(n.tok)));
+      setLayerNotes(stateId, layerId, valid.map((n) => (role === 'kit'
+        ? { step: n.step, tok: n.tok, len: 1, lane: n.lane }
+        : { step: n.step, tok: n.tok, len: n.len })));
+    }
+  }
+}
 
 // ------------------------------------------------------------------- harmony
 
@@ -181,6 +274,35 @@ export function arpNote(root, tok) {
 export const accentNote = (root, tok) => arpNote(root, tok) + 12;
 export const melodyNote = (tok) => degreeMidi(E4, MELODY_DEG[tok] ?? 0);
 export const timpaniNote = (root) => bassNote(root, '1') + 12;
+
+// ------------------------------------------------------------ editor model
+
+const NOTE_NAMES = ['C', 'C♯', 'D', 'E♭', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'B♭', 'B'];
+const noteName = (m) => `${NOTE_NAMES[m % 12]}${Math.floor(m / 12) - 1}`;
+const rows = (list) => list.map(([key, label]) => ({ key, label }));
+const CHORD_TONES = rows([['n', '9th'], ['o', 'Octave'], ['s', '7th'], ['f', '5th'], ['t', '3rd'], ['r', 'Root']]);
+
+// Rows of the piano roll for each role, top to bottom. Melodic rows are note
+// tokens; kit rows are lanes.
+export const ROWS = {
+  pad: rows([['P', 'Chord']]),
+  bass: rows([['8', 'Octave'], ['7', '7th'], ['5', '5th'], ['4', '4th'], ['3', '3rd'], ['1', 'Root']]),
+  arp: CHORD_TONES,
+  accent: CHORD_TONES,
+  lead: ['B', 'A', '0', '9', '8', '7', '6', '5', '4', '3', '2', '1', 'z', 'y', 'x'].map((key) => ({ key, label: noteName(melodyNote(key)) })),
+  kit: rows([['c', 'Crash'], ['o', 'Open hat'], ['h', 'Hat'], ['s', 'Snare'], ['t', 'High tom'], ['l', 'Low tom'], ['k', 'Kick'], ['p', 'Pitched']]),
+};
+
+// Diatonic chords of E Phrygian, by root scale degree.
+export const CHORDS = [
+  { degree: 0, name: 'Em', roman: 'i' },
+  { degree: 1, name: 'F', roman: '♭II' },
+  { degree: 2, name: 'G', roman: '♭III' },
+  { degree: 3, name: 'Am', roman: 'iv' },
+  { degree: 4, name: 'B°', roman: 'v°' },
+  { degree: 5, name: 'C', roman: '♭VI' },
+  { degree: 6, name: 'D', roman: '♭VII' },
+];
 
 // Tom fill played under the last beat before the music escalates.
 export const FILL = [
